@@ -1,6 +1,7 @@
 ﻿using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
@@ -8,7 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 
 namespace TestNotification
-{//dasgasdgasdgasd zalupa o4ko
+{
     internal class Program
     {
         static async Task Main(string[] args)
@@ -24,30 +25,30 @@ namespace TestNotification
 
             while (true)
             {
-                List<string> currentItems = await GetItemsFromApiAsync(apiUrl);
+                LotResponse lots = await GetItemsFromApiAsync(apiUrl);
 
-                if (currentItems != null)
+                if (lots != null)
                 {
                     // Проверяем наличие новых предметов
-                    List<string> newItems = GetNewItems(previousItems, currentItems);
+                    List<string> newItems = GetNewItems(previousItems, lots.Lots);
 
                     if (newItems.Count > 0)
                     {
                         // Отправляем новые предметы через сокет
                         Console.WriteLine($"Отправляем новые предметы через сокет. Время: {DateTime.Now}");
-                        SendNotification(JsonConvert.SerializeObject(newItems));
+                        await SendNotificationAsync(lots);
                     }
 
                     // Обновляем список предметов
-                    previousItems = currentItems;
+                    previousItems = lots.Lots.Select(lot => $"ID: {lot.ItemId}, Стартовая цена: {lot.StartPrice}, Цена выкупа: {lot.BuyoutPrice}").ToList();
                 }
 
                 // Ждем перед следующим обращением к API
-                Thread.Sleep(pollingIntervalSeconds * 1000);
+                await Task.Delay(pollingIntervalSeconds * 1000);
             }
         }
 
-        static async Task<List<string>> GetItemsFromApiAsync(string apiUrl)
+        static async Task<LotResponse> GetItemsFromApiAsync(string apiUrl)
         {
             using (var httpClient = new HttpClient())
             {
@@ -59,32 +60,7 @@ namespace TestNotification
                     {
                         string jsonResponse = await response.Content.ReadAsStringAsync();
                         var lots = JsonConvert.DeserializeObject<LotResponse>(jsonResponse);
-                        try
-                        {
-                            // Проверка на null для объекта lots
-                            if (lots != null)
-                            {
-                                List<string> items = new List<string>();
-
-                                foreach (var lot in lots.Lots)
-                                {
-                                    items.Add($"ID: {lot.ItemId}, Стартовая цена: {lot.StartPrice}, Цена выкупа: {lot.BuyoutPrice}");
-                                }
-
-                                return items;
-                            }
-                            else
-                            {
-                                Console.WriteLine("API вернуло пустой ответ.");
-                                return null;
-                            }
-                        }
-                        catch (Exception)
-                        {
-
-                            return null;
-                        }
-                        
+                        return lots;
                     }
                     else
                     {
@@ -100,12 +76,13 @@ namespace TestNotification
             }
         }
 
-        static List<string> GetNewItems(List<string> previousItems, List<string> currentItems)
+        static List<string> GetNewItems(List<string> previousItems, List<Lot> currentLots)
         {
             List<string> newItems = new List<string>();
 
-            foreach (var currentItem in currentItems)
+            foreach (var currentLot in currentLots)
             {
+                string currentItem = $"ID: {currentLot.ItemId}, Стартовая цена: {currentLot.StartPrice}, Цена выкупа: {currentLot.BuyoutPrice}";
                 if (!previousItems.Contains(currentItem))
                 {
                     newItems.Add(currentItem);
@@ -115,7 +92,7 @@ namespace TestNotification
             return newItems;
         }
 
-        static void SendNotification(string message)
+        static async Task SendNotificationAsync(LotResponse lotResponse)
         {
             try
             {
@@ -123,15 +100,18 @@ namespace TestNotification
                 string serverAddress = "127.0.0.1";
                 int serverPort = 8888;
 
+                // Сериализация объекта LotResponse в формат JSON
+                string jsonMessage = JsonConvert.SerializeObject(lotResponse);
+
                 // Создание TCP клиента и подключение к серверу сокетов
                 using (TcpClient client = new TcpClient(serverAddress, serverPort))
                 using (NetworkStream stream = client.GetStream())
                 {
                     // Преобразование сообщения в байты
-                    byte[] data = Encoding.UTF8.GetBytes(message);
+                    byte[] data = Encoding.UTF8.GetBytes(jsonMessage);
 
                     // Отправка данных
-                    stream.Write(data, 0, data.Length);
+                    await stream.WriteAsync(data, 0, data.Length);
                 }
             }
             catch (Exception ex)
