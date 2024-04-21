@@ -7,6 +7,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using static System.Net.WebRequestMethods;
 
 namespace TestNotification
 {
@@ -18,33 +19,51 @@ namespace TestNotification
             int pollingIntervalSeconds = 60;
 
             // URL вашего API
-            string apiUrl = "https://stalcraft.wiki/api/available-lots?region=ru&id=zz6km";
+            List<string> listUrl = new List<string> {"https://stalcraftdb.net/api/items/ok096/auction-lots?region=ru&page=0", "https://stalcraftdb.net/api/items/knqkv/auction-history?region=ru&page=0"  };
+            
+            
 
             // Список предметов, с которым будем сравнивать новые предметы
             List<string> previousItems = new List<string>();
 
             while (true)
             {
-                LotResponse lots = await GetItemsFromApiAsync(apiUrl);
-
-                if (lots != null)
+                LotResponse lots = new LotResponse();
+                foreach (var item in listUrl)
                 {
-                    // Проверяем наличие новых предметов
-                    List<string> newItems = GetNewItems(previousItems, lots.Lots);
 
-                    if (newItems.Count > 0)
+                    lots = await GetItemsFromApiAsync(item);
+
+
+
+                    if (lots != null)
                     {
-                        // Отправляем новые предметы через сокет
-                        Console.WriteLine($"Отправляем новые предметы через сокет. Время: {DateTime.Now}");
-                        await SendNotificationAsync(lots);
+                        // Проверяем наличие новых предметов
+                        List<string> newItems = GetNewItems(previousItems, lots.Lots);
+                        if (newItems != null)
+                        {
+                            if (newItems.Count > 0)
+                            {
+                                // Отправляем новые предметы через сокет
+                                Console.WriteLine($"Отправляем новые предметы через сокет. Время: {DateTime.Now}");
+                                await SendNotificationAsync(lots);
+                            }
+                        }
+
+
+                        try { previousItems = lots.Lots.Select(lot => $"ID: {lot.ItemId}, Стартовая цена: {lot.StartPrice}, Цена выкупа: {lot.BuyoutPrice}").ToList(); }
+                        catch { }
+                        // Обновляем список предметов
+
                     }
-
-                    // Обновляем список предметов
-                    previousItems = lots.Lots.Select(lot => $"ID: {lot.ItemId}, Стартовая цена: {lot.StartPrice}, Цена выкупа: {lot.BuyoutPrice}").ToList();
+                    else
+                    {
+                        Console.WriteLine("lots равен null");
+                    }
                 }
-
-                // Ждем перед следующим обращением к API
-                await Task.Delay(pollingIntervalSeconds * 1000);
+                    // Ждем перед следующим обращением к API
+                    await Task.Delay(pollingIntervalSeconds * 1000);
+                
             }
         }
 
@@ -78,19 +97,37 @@ namespace TestNotification
 
         static List<string> GetNewItems(List<string> previousItems, List<Lot> currentLots)
         {
+            
             List<string> newItems = new List<string>();
-
-            foreach (var currentLot in currentLots)
-            {
-                string currentItem = $"ID: {currentLot.ItemId}, Стартовая цена: {currentLot.StartPrice}, Цена выкупа: {currentLot.BuyoutPrice}";
-                if (!previousItems.Contains(currentItem))
+            if(currentLots != null) {
+                try
                 {
-                    newItems.Add(currentItem);
+                    foreach (var currentLot in currentLots)
+                    {
+                        string currentItem = $"ID: {currentLot.ItemId}, Стартовая цена: {currentLot.StartPrice}, Цена выкупа: {currentLot.BuyoutPrice}";
+                        if (!previousItems.Contains(currentItem))
+                        {
+                            newItems.Add(currentItem);
+                        }
+                    }
+                    return newItems;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex.Message);
+                    return null;
                 }
             }
+            else
+            {
+                Console.WriteLine("currentLots равно null");
+                return null;
+            }
+            
 
-            return newItems;
-        }
+
+
+}
 
         static async Task SendNotificationAsync(LotResponse lotResponse)
         {
